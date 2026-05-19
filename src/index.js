@@ -7,9 +7,10 @@ const app = express();
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:3000',
+  process.env.FRONTEND_URL,
   'http://localhost:3000',
-  'http://localhost:5173', // Vite dev server
+  'https://rent-tracker-frontend.vercel.app',
+  'http://localhost:5173',
 ];
 app.use(cors({
   origin: (origin, cb) => {
