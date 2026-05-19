@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: rent-tracker-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false        # Set this manually in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      - key: RESEND_API_KEY
+        sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: REMINDER_FROM_EMAIL
+        sync: false
+      - key: REMINDER_TO_EMAIL
+        sync: false
+      - key: REMINDER_PHONE
+        sync: false
+      - key: FRONTEND_URL
+        sync: false        # Your Vercel frontend URL
