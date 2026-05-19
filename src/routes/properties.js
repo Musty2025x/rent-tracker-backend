@@ -9,30 +9,31 @@ router.use(auth);
 // ── GET /api/properties ───────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
+    // No GROUP BY — it was dropping lease date fields
     const result = await query(`
       SELECT
         p.id, p.address, p.city, p.state, p.country, p.house_type, p.created_at,
-        t.id          AS tenant_id,
-        t.name        AS tenant_name,
+        t.id            AS tenant_id,
+        t.name          AS tenant_name,
         t.occupation,
-        t.phone       AS tenant_phone,
-        t.email       AS tenant_email,
+        t.phone         AS tenant_phone,
+        t.email         AS tenant_email,
         t.notes,
-        l.id          AS lease_id,
+        l.id            AS lease_id,
         l.move_in_date,
         l.start_date,
         l.end_date,
         l.yearly_rent,
         l.duration_months,
-        l.status      AS lease_status
+        l.status        AS lease_status
       FROM properties p
-      LEFT JOIN tenants  t ON t.property_id = p.id
-      LEFT JOIN leases   l ON l.property_id = p.id AND l.status = 'active'
+      LEFT JOIN tenants t ON t.property_id = p.id
+      LEFT JOIN leases  l ON l.property_id = p.id AND l.status = 'active'
       WHERE p.user_id = $1
-      GROUP BY p.id, t.id, l.id
       ORDER BY p.created_at DESC
     `, [req.user.id]);
 
+    // Fetch all payments for these properties separately
     const propIds = result.rows.map(r => r.id);
     let payments = [];
     if (propIds.length) {
@@ -152,7 +153,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ── PUT /api/properties/:id  — update everything ──────────────────────────────
+// ── PUT /api/properties/:id ───────────────────────────────────────────────────
 router.put('/:id', async (req, res) => {
   const {
     address, city, state, country, house_type,
@@ -164,7 +165,6 @@ router.put('/:id', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Verify ownership
     const own = await client.query(
       'SELECT id FROM properties WHERE id=$1 AND user_id=$2',
       [req.params.id, req.user.id]
@@ -174,77 +174,60 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Property not found.' });
     }
 
-    // ── Update property table ──
-    // Only update fields that were actually sent (not undefined)
-    const propFields = [];
-    const propVals  = [];
-    let idx = 1;
-    if (address    !== undefined) { propFields.push(`address=$${idx++}`);    propVals.push(address); }
-    if (city       !== undefined) { propFields.push(`city=$${idx++}`);       propVals.push(city); }
-    if (state      !== undefined) { propFields.push(`state=$${idx++}`);      propVals.push(state); }
-    if (country    !== undefined) { propFields.push(`country=$${idx++}`);    propVals.push(country); }
-    if (house_type !== undefined) { propFields.push(`house_type=$${idx++}`); propVals.push(house_type); }
-
+    // Update property
+    const propFields = []; const propVals = []; let pi = 1;
+    if (address    !== undefined) { propFields.push(`address=$${pi++}`);    propVals.push(address); }
+    if (city       !== undefined) { propFields.push(`city=$${pi++}`);       propVals.push(city); }
+    if (state      !== undefined) { propFields.push(`state=$${pi++}`);      propVals.push(state); }
+    if (country    !== undefined) { propFields.push(`country=$${pi++}`);    propVals.push(country); }
+    if (house_type !== undefined) { propFields.push(`house_type=$${pi++}`); propVals.push(house_type); }
     if (propFields.length) {
       propVals.push(req.params.id);
-      await client.query(
-        `UPDATE properties SET ${propFields.join(', ')} WHERE id=$${idx}`,
-        propVals
-      );
+      await client.query(`UPDATE properties SET ${propFields.join(',')} WHERE id=$${pi}`, propVals);
     }
 
-    // ── Update tenant table ──
-    const tenFields = [];
-    const tenVals   = [];
-    let tidx = 1;
-    if (tenant_name !== undefined) { tenFields.push(`name=$${tidx++}`);       tenVals.push(tenant_name); }
-    if (occupation  !== undefined) { tenFields.push(`occupation=$${tidx++}`); tenVals.push(occupation); }
-    if (phone       !== undefined) { tenFields.push(`phone=$${tidx++}`);      tenVals.push(phone); }
-    if (email       !== undefined) { tenFields.push(`email=$${tidx++}`);      tenVals.push(email); }
-    if (notes       !== undefined) { tenFields.push(`notes=$${tidx++}`);      tenVals.push(notes); }
-
+    // Update tenant
+    const tenFields = []; const tenVals = []; let ti = 1;
+    if (tenant_name !== undefined) { tenFields.push(`name=$${ti++}`);       tenVals.push(tenant_name); }
+    if (occupation  !== undefined) { tenFields.push(`occupation=$${ti++}`); tenVals.push(occupation); }
+    if (phone       !== undefined) { tenFields.push(`phone=$${ti++}`);      tenVals.push(phone || null); }
+    if (email       !== undefined) { tenFields.push(`email=$${ti++}`);      tenVals.push(email || null); }
+    if (notes       !== undefined) { tenFields.push(`notes=$${ti++}`);      tenVals.push(notes); }
     if (tenFields.length) {
       tenVals.push(req.params.id);
-      await client.query(
-        `UPDATE tenants SET ${tenFields.join(', ')} WHERE property_id=$${tidx}`,
-        tenVals
-      );
+      await client.query(`UPDATE tenants SET ${tenFields.join(',')} WHERE property_id=$${ti}`, tenVals);
     }
 
-    // ── Update lease table ──
-    const leFields = [];
-    const leVals   = [];
-    let lidx = 1;
-    if (move_in_date    !== undefined) { leFields.push(`move_in_date=$${lidx++}`);    leVals.push(move_in_date); }
-    if (start_date      !== undefined) { leFields.push(`start_date=$${lidx++}`);      leVals.push(start_date); }
-    if (yearly_rent     !== undefined) { leFields.push(`yearly_rent=$${lidx++}`);     leVals.push(yearly_rent); }
-    if (duration_months !== undefined) { leFields.push(`duration_months=$${lidx++}`); leVals.push(duration_months); }
+    // Update lease
+    const leFields = []; const leVals = []; let li = 1;
+    if (move_in_date    !== undefined) { leFields.push(`move_in_date=$${li++}`);    leVals.push(move_in_date); }
+    if (start_date      !== undefined) { leFields.push(`start_date=$${li++}`);      leVals.push(start_date); }
+    if (yearly_rent     !== undefined) { leFields.push(`yearly_rent=$${li++}`);     leVals.push(yearly_rent); }
+    if (duration_months !== undefined) { leFields.push(`duration_months=$${li++}`); leVals.push(duration_months); }
 
     if (leFields.length) {
-      // Recalculate end_date if start_date or duration changed
       const leaseRow = await client.query(
-        'SELECT start_date, duration_months FROM leases WHERE property_id=$1 AND status=$2',
-        [req.params.id, 'active']
+        `SELECT id, start_date, duration_months FROM leases
+         WHERE property_id=$1 AND status='active'`,
+        [req.params.id]
       );
-
       if (leaseRow.rows.length) {
         const newStart    = start_date      || leaseRow.rows[0].start_date;
         const newDuration = duration_months || leaseRow.rows[0].duration_months;
         const newEnd      = new Date(newStart);
         newEnd.setMonth(newEnd.getMonth() + parseInt(newDuration));
-        leFields.push(`end_date=$${lidx++}`);
+        leFields.push(`end_date=$${li++}`);
         leVals.push(newEnd.toISOString().slice(0, 10));
-        leVals.push(req.params.id);
+        leVals.push(leaseRow.rows[0].id);
         await client.query(
-          `UPDATE leases SET ${leFields.join(', ')} WHERE property_id=$${lidx} AND status='active'`,
-          leVals
+          `UPDATE leases SET ${leFields.join(',')} WHERE id=$${li}`, leVals
         );
-      } else {
-        // No active lease yet — create one
+      } else if (move_in_date && start_date && yearly_rent) {
+        // No lease yet — create one
         const tenRow = await client.query(
           'SELECT id FROM tenants WHERE property_id=$1', [req.params.id]
         );
-        if (tenRow.rows.length && move_in_date && start_date && yearly_rent) {
+        if (tenRow.rows.length) {
           const endDate = new Date(start_date);
           endDate.setMonth(endDate.getMonth() + parseInt(duration_months || 12));
           await client.query(
@@ -259,7 +242,7 @@ router.put('/:id', async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Return fresh full property data
+    // Return fresh data
     const fresh = await query(`
       SELECT
         p.id, p.address, p.city, p.state, p.country, p.house_type,
@@ -276,7 +259,7 @@ router.put('/:id', async (req, res) => {
     res.json({ property: fresh.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('PUT /properties error:', err);
+    console.error('PUT error:', err);
     res.status(500).json({ error: 'Server error: ' + err.message });
   } finally {
     client.release();
