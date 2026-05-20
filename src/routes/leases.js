@@ -5,17 +5,20 @@ const auth = require('../middleware/auth');
 const router = express.Router();
 router.use(auth);
 
-// GET /api/leases?property_id=X  — lease history for a property
+// GET /api/leases?property_id=X
 router.get('/', async (req, res) => {
   const { property_id } = req.query;
   if (!property_id) return res.status(400).json({ error: 'property_id required.' });
   try {
-    // Verify ownership
     const own = await query('SELECT id FROM properties WHERE id=$1 AND user_id=$2', [property_id, req.user.id]);
     if (!own.rows.length) return res.status(403).json({ error: 'Access denied.' });
-
     const result = await query(
-      'SELECT * FROM leases WHERE property_id=$1 ORDER BY start_date DESC',
+      `SELECT id, property_id, tenant_id,
+        TO_CHAR(move_in_date, 'YYYY-MM-DD') AS move_in_date,
+        TO_CHAR(start_date,   'YYYY-MM-DD') AS start_date,
+        TO_CHAR(end_date,     'YYYY-MM-DD') AS end_date,
+        yearly_rent, duration_months, status, created_at
+       FROM leases WHERE property_id=$1 ORDER BY start_date DESC`,
       [property_id]
     );
     res.json({ leases: result.rows });
@@ -24,7 +27,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/leases/:id/renew  — renew a lease (extends by same duration)
+// POST /api/leases/:id/renew
 router.post('/:id/renew', async (req, res) => {
   const client = await require('../db/pool').getClient();
   try {
@@ -46,23 +49,23 @@ router.post('/:id/renew', async (req, res) => {
       return res.status(403).json({ error: 'Access denied.' });
     }
 
-    // New start = max(today, old end_date)
-    const today = new Date();
-    const oldEnd = new Date(lease.end_date);
-    const newStart = oldEnd > today ? oldEnd : today;
+    // New start = old end_date (keeps the fixed annual date)
+    const newStart = new Date(lease.start_date);
+    newStart.setFullYear(newStart.getFullYear() + 1);
     const newEnd = new Date(newStart);
-    newEnd.setMonth(newEnd.getMonth() + lease.duration_months);
+    newEnd.setFullYear(newEnd.getFullYear() + 1);
 
-    // Mark old lease as renewed
+    // Mark old as renewed
     await client.query('UPDATE leases SET status=$1 WHERE id=$2', ['renewed', lease.id]);
 
-    // Create new lease
+    // Create new lease — keep same start day/month, just next year
     const yearly_rent = req.body.yearly_rent || lease.yearly_rent;
     const newLease = await client.query(
       `INSERT INTO leases (property_id,tenant_id,move_in_date,start_date,end_date,yearly_rent,duration_months,status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,'active') RETURNING *`,
       [lease.property_id, lease.tenant_id, lease.move_in_date,
-       newStart.toISOString().slice(0,10), newEnd.toISOString().slice(0,10),
+       newStart.toISOString().slice(0,10),
+       newEnd.toISOString().slice(0,10),
        yearly_rent, lease.duration_months]
     );
 

@@ -9,7 +9,7 @@ router.use(auth);
 // ── GET /api/properties ───────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    // No GROUP BY — it was dropping lease date fields
+    // Cast dates to plain YYYY-MM-DD strings to avoid timezone issues in frontend
     const result = await query(`
       SELECT
         p.id, p.address, p.city, p.state, p.country, p.house_type, p.created_at,
@@ -20,9 +20,9 @@ router.get('/', async (req, res) => {
         t.email         AS tenant_email,
         t.notes,
         l.id            AS lease_id,
-        l.move_in_date,
-        l.start_date,
-        l.end_date,
+        TO_CHAR(l.move_in_date, 'YYYY-MM-DD') AS move_in_date,
+        TO_CHAR(l.start_date,   'YYYY-MM-DD') AS start_date,
+        TO_CHAR(l.end_date,     'YYYY-MM-DD') AS end_date,
         l.yearly_rent,
         l.duration_months,
         l.status        AS lease_status
@@ -138,7 +138,10 @@ router.get('/:id', async (req, res) => {
         p.id, p.address, p.city, p.state, p.country, p.house_type,
         t.id AS tenant_id, t.name AS tenant_name, t.occupation,
         t.phone AS tenant_phone, t.email AS tenant_email, t.notes,
-        l.id AS lease_id, l.move_in_date, l.start_date, l.end_date,
+        l.id AS lease_id,
+        TO_CHAR(l.move_in_date, 'YYYY-MM-DD') AS move_in_date,
+        TO_CHAR(l.start_date,   'YYYY-MM-DD') AS start_date,
+        TO_CHAR(l.end_date,     'YYYY-MM-DD') AS end_date,
         l.yearly_rent, l.duration_months, l.status AS lease_status
       FROM properties p
       LEFT JOIN tenants t ON t.property_id = p.id
@@ -248,7 +251,10 @@ router.put('/:id', async (req, res) => {
         p.id, p.address, p.city, p.state, p.country, p.house_type,
         t.id AS tenant_id, t.name AS tenant_name, t.occupation,
         t.phone AS tenant_phone, t.email AS tenant_email, t.notes,
-        l.id AS lease_id, l.move_in_date, l.start_date, l.end_date,
+        l.id AS lease_id,
+        TO_CHAR(l.move_in_date, 'YYYY-MM-DD') AS move_in_date,
+        TO_CHAR(l.start_date,   'YYYY-MM-DD') AS start_date,
+        TO_CHAR(l.end_date,     'YYYY-MM-DD') AS end_date,
         l.yearly_rent, l.duration_months, l.status AS lease_status
       FROM properties p
       LEFT JOIN tenants t ON t.property_id = p.id
