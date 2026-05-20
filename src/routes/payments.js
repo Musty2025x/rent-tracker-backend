@@ -7,17 +7,22 @@ const router = express.Router();
 router.use(auth);
 
 function genReceiptNo() {
-  const ts = Date.now().toString(36).toUpperCase();
+  const ts   = Date.now().toString(36).toUpperCase();
   const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `RCT-${ts}-${rand}`;
 }
 
-// GET /api/payments?property_id=X  — list payments (optionally filtered)
+// GET /api/payments?property_id=X
 router.get('/', async (req, res) => {
   const { property_id } = req.query;
   try {
     let sql = `
-      SELECT pay.*, p.address, p.city, t.name AS tenant_name, t.occupation
+      SELECT
+        pay.id, pay.lease_id, pay.property_id, pay.tenant_id,
+        pay.amount, pay.note, pay.receipt_no, pay.created_at,
+        TO_CHAR(pay.paid_date, 'YYYY-MM-DD') AS paid_date,
+        p.address, p.city,
+        t.name AS tenant_name, t.occupation
       FROM payments pay
       JOIN properties p ON p.id = pay.property_id
       JOIN tenants    t ON t.id = pay.tenant_id
@@ -25,7 +30,7 @@ router.get('/', async (req, res) => {
     `;
     const params = [req.user.id];
     if (property_id) { sql += ' AND pay.property_id = $2'; params.push(property_id); }
-    sql += ' ORDER BY pay.paid_date DESC';
+    sql += ' ORDER BY pay.paid_date DESC, pay.created_at DESC';
     const result = await query(sql, params);
     res.json({ payments: result.rows });
   } catch (err) {
@@ -33,7 +38,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/payments  — record a new payment
+// POST /api/payments
 router.post('/', [
   body('lease_id').isInt(),
   body('amount').isNumeric(),
@@ -44,7 +49,6 @@ router.post('/', [
 
   const { lease_id, amount, paid_date, note } = req.body;
   try {
-    // Verify lease belongs to this user
     const leaseCheck = await query(`
       SELECT l.id, l.property_id, l.tenant_id
       FROM leases l
@@ -52,13 +56,17 @@ router.post('/', [
       WHERE l.id = $1 AND p.user_id = $2
     `, [lease_id, req.user.id]);
 
-    if (!leaseCheck.rows.length) return res.status(403).json({ error: 'Lease not found or access denied.' });
-    const { property_id, tenant_id } = leaseCheck.rows[0];
+    if (!leaseCheck.rows.length)
+      return res.status(403).json({ error: 'Lease not found or access denied.' });
 
+    const { property_id, tenant_id } = leaseCheck.rows[0];
     const receipt_no = genReceiptNo();
+
     const result = await query(
       `INSERT INTO payments (lease_id,property_id,tenant_id,amount,paid_date,note,receipt_no)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, lease_id, property_id, tenant_id, amount, note, receipt_no, created_at,
+                 TO_CHAR(paid_date, 'YYYY-MM-DD') AS paid_date`,
       [lease_id, property_id, tenant_id, amount, paid_date, note || null, receipt_no]
     );
     res.status(201).json({ payment: result.rows[0] });
@@ -68,13 +76,18 @@ router.post('/', [
   }
 });
 
-// GET /api/payments/:id/receipt  — full receipt data
+// GET /api/payments/:id/receipt
 router.get('/:id/receipt', async (req, res) => {
   try {
     const result = await query(`
-      SELECT pay.*, p.address, p.city, p.state, p.country,
-             t.name AS tenant_name, t.occupation, t.phone AS tenant_phone,
-             l.start_date, l.end_date, l.yearly_rent
+      SELECT
+        pay.id, pay.amount, pay.note, pay.receipt_no,
+        TO_CHAR(pay.paid_date, 'YYYY-MM-DD') AS paid_date,
+        p.address, p.city, p.state, p.country,
+        t.name AS tenant_name, t.occupation, t.phone AS tenant_phone,
+        TO_CHAR(l.start_date, 'YYYY-MM-DD') AS start_date,
+        TO_CHAR(l.end_date,   'YYYY-MM-DD') AS end_date,
+        l.yearly_rent
       FROM payments pay
       JOIN properties p ON p.id = pay.property_id
       JOIN tenants    t ON t.id = pay.tenant_id
